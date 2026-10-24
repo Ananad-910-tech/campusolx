@@ -1,4 +1,6 @@
+import { registerCampusOLXServiceWorker } from "./registerSW";
 import React from "react";
+registerCampusOLXServiceWorker();
 import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
 import "./styles.css";
