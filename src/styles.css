@@ -290,3 +290,35 @@
 .dashboard-status{font-size:9px;font-weight:700;text-transform:capitalize;padding:5px 7px;background:#edf5e8;color:#557248;border-radius:5px;white-space:nowrap}
 .dashboard-empty{font-size:11px;line-height:1.6;color:var(--muted);background:#f8f6f0;padding:13px;border-radius:8px;margin:0}
 @media(max-width:560px){.dashboard-modal{padding:25px 17px}.dashboard-stats{gap:7px}.dashboard-stats>div{padding:10px;gap:4px}.dashboard-stats strong{font-size:19px}.dashboard-stats span{font-size:9px}.dashboard-row{gap:7px;flex-wrap:wrap}.dashboard-row>b{margin-left:auto}.dashboard-row small{font-size:9px}}
+
+/* Keep Sign In and Sell visible on mobile */
+@media (max-width: 768px) {
+  .site-header {
+    flex-wrap: wrap;
+  }
+
+  .header-actions {
+    display: flex !important;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .header-actions .button {
+    font-size: 12px;
+    padding: 9px 10px;
+    white-space: nowrap;
+  }
+
+  .header-actions .sell-button {
+    display: inline-flex !important;
+  }
+
+  .header-search {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .brand-name small {
+    display: none;
+  }
+}

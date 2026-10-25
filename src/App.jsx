@@ -231,6 +231,7 @@ export default function App() {
   const [authOpen, setAuthOpen] = useState(false);
   const [sellOpen, setSellOpen] = useState(false);
   const [detail, setDetail] = useState(null);
+  const [promotionItem, setPromotionItem] = useState(null);
   const [mobileNav, setMobileNav] = useState(false);
   useEffect(() => {
     function closeMenuOnEscape(event) { if (event.key === "Escape") setMobileNav(false); }
@@ -801,6 +802,14 @@ const searchSuggestions = items.filter((item) => {
               {user && item.seller_id === user.id && !item.demo && <div className="seller-listing-controls" style={{ display: "flex", gap: 8, padding: "0 12px 12px", flexWrap: "wrap" }}>
                 <button type="button" className="button secondary" style={{ fontSize: 12, padding: "7px 10px" }} onClick={() => updateStockStatus(item, item.stock_status === "out_of_stock" ? "in_stock" : "out_of_stock")}>{item.stock_status === "out_of_stock" ? "Mark In Stock" : "Mark Out of Stock"}</button>
                 <button type="button" className="button secondary" style={{ fontSize: 12, padding: "7px 10px", color: "#b42318" }} onClick={() => deleteListing(item)}>Delete</button>
+                <button
+  type="button"
+  className="button primary"
+  style={{ fontSize: 12, padding: "7px 10px" }}
+  onClick={() => setPromotionItem(item)}
+>
+  Promote Item
+</button>
               </div>}
              
 <button
@@ -937,6 +946,30 @@ const searchSuggestions = items.filter((item) => {
             </section>
           </>}
           <p className="fine-print">Only activity recorded after the required database tables are set up will appear. Older activity is not reconstructed.</p>
+        </section>
+      </div>}
+      {promotionItem && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setPromotionItem(null)}>
+        <section className="modal" role="dialog" aria-modal="true" aria-labelledby="promotion-title">
+          <button className="icon-button modal-close" onClick={() => setPromotionItem(null)} aria-label="Close"><X size={20}/></button>
+          <p className="eyebrow">GET MORE VISIBILITY</p>
+          <h2 id="promotion-title">Promote your item</h2>
+          <p className="muted">Choose a promotion plan for <strong>{promotionItem.title}</strong>.</p>
+          <div className="form-stack" style={{ marginTop: 18 }}>
+            <div style={{ border: "1px solid #e8e3da", borderRadius: 12, padding: 14 }}>
+              <strong>Quick Boost · 3 days</strong>
+              <p style={{ margin: "6px 0 0" }}>₹19</p>
+            </div>
+            <div style={{ border: "1px solid #f36b3f", borderRadius: 12, padding: 14 }}>
+              <strong>Featured Listing · 7 days</strong>
+              <p style={{ margin: "6px 0 0" }}>₹49</p>
+            </div>
+            <div style={{ border: "1px solid #e8e3da", borderRadius: 12, padding: 14 }}>
+              <strong>Premium Boost · 14 days</strong>
+              <p style={{ margin: "6px 0 0" }}>₹89</p>
+            </div>
+          </div>
+          <p className="notice" style={{ marginTop: 16 }}>Payments are not connected yet. You will not be charged. These are proposed prices only.</p>
+          <button className="button primary full" onClick={() => setPromotionItem(null)}>Got it</button>
         </section>
       </div>}
       {authOpen && <AuthModal onClose={() => setAuthOpen(false)} onSignedIn={setUser}/>}
