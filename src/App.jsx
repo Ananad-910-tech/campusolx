@@ -41,6 +41,16 @@ function formatPrice(value) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value || 0);
 }
 
+function isListingOwner(item, user) {
+  return Boolean(user && item && !item.demo && !String(item.id).startsWith("demo-") && String(item.seller_id || "") === String(user.id || ""));
+}
+
+function getIndianWhatsAppNumber(value) {
+  let digits = String(value || "").replace(/\D/g, "").replace(/^0+/, "");
+  if (digits.startsWith("91") && digits.length === 12) digits = digits.slice(2);
+  return /^[6-9]\d{9}$/.test(digits) ? `91${digits}` : "";
+}
+
 function ProductArt({ item, large = false }) {
   if (item.image_url) return <img className={`product-photo ${large ? "large" : ""}`} src={item.image_url} alt={item.title} />;
   const color = categoryColors[item.category] || "lavender";
@@ -315,6 +325,18 @@ export default function App() {
     if (!user) return;
     setProfileSaving(true);
     setProfileMessage("");
+
+    // Validate the seller's number before saving it. Accepts 10-digit Indian
+    // mobile numbers, +91/91 prefixes, spaces, hyphens, and a leading 0.
+    const normalizedWhatsapp = profileWhatsapp.trim()
+      ? getIndianWhatsAppNumber(profileWhatsapp)
+      : "";
+    if (profileWhatsapp.trim() && !normalizedWhatsapp) {
+      setProfileMessage("Enter a valid Indian mobile number, e.g. +91 98765 43210.");
+      setProfileSaving(false);
+      return;
+    }
+
     try {
       let avatarUrl = user.user_metadata?.avatar_url || "";
       if (profilePhotoFile) {
@@ -335,8 +357,18 @@ export default function App() {
       setProfilePhotoPreview(data.user.user_metadata?.avatar_url || "");
       setProfilePhotoFile(null);
       setProfileHasBeenSaved(true);
+
+      // Existing listings keep a snapshot of the number from when they were
+      // posted, so update the signed-in seller's listings as well.
+      const { error: listingPhoneError } = await supabase
+        .from("listings")
+        .update({ seller_whatsapp: profileWhatsapp.trim() })
+        .eq("seller_id", user.id);
+
       await logActivity("profile_updated", { message: "Student profile updated" });
-      setProfileMessage("Profile saved successfully.");
+      setProfileMessage(listingPhoneError
+        ? "Profile saved. New number saved to your profile, but existing listings could not be updated. Check your listings UPDATE policy in Supabase, then save again."
+        : "Profile saved successfully. Your existing listings now use the updated WhatsApp number.");
     } catch (error) {
       setProfileMessage(error.message || "Could not save profile. Check your photo storage permissions.");
     } finally {
@@ -420,7 +452,7 @@ async function toggleFavorite(item) {
       setDbError("Demo products cannot be updated. Choose one of your real listings.");
       return;
     }
-    if (item.seller_id !== user.id) {
+    if (String(item.seller_id || "") !== String(user.id || "")) {
       setDbError("You can only update the stock status of your own listings.");
       return;
     }
@@ -445,7 +477,7 @@ async function toggleFavorite(item) {
       setDbError("Demo products cannot be deleted.");
       return;
     }
-    if (item.seller_id !== user.id) {
+    if (String(item.seller_id || "") !== String(user.id || "")) {
       setDbError("You can only delete your own listings.");
       return;
     }
@@ -799,7 +831,7 @@ const searchSuggestions = items.filter((item) => {
                 <div className="product-image-wrap"><ProductArt item={item}/><span className="condition-tag">{item.condition}</span>{item.stock_status === "out_of_stock" && <span className="stock-status-badge" style={{ position: "absolute", left: 10, top: 10, zIndex: 2, background: "#b42318", color: "white", padding: "5px 9px", borderRadius: 999, fontSize: 12, fontWeight: 700 }}>Out of Stock</span>}</div>
                 <div className="product-info"><div className="product-category">{item.category}</div><h3>{item.title}</h3><div className="product-price">{formatPrice(item.price)}</div><div className="product-location"><MapPin size={14}/>{item.location || "Campus pickup"}</div></div>
               </button>
-              {user && item.seller_id === user.id && !item.demo && <div className="seller-listing-controls" style={{ display: "flex", gap: 8, padding: "0 12px 12px", flexWrap: "wrap" }}>
+              {isListingOwner(item, user) && <div className="seller-listing-controls" style={{ display: "flex", gap: 8, padding: "0 12px 12px", flexWrap: "wrap" }}>
                 <button type="button" className="button secondary" style={{ fontSize: 12, padding: "7px 10px" }} onClick={() => updateStockStatus(item, item.stock_status === "out_of_stock" ? "in_stock" : "out_of_stock")}>{item.stock_status === "out_of_stock" ? "Mark In Stock" : "Mark Out of Stock"}</button>
                 <button type="button" className="button secondary" style={{ fontSize: 12, padding: "7px 10px", color: "#b42318" }} onClick={() => deleteListing(item)}>Delete</button>
                 <button
@@ -974,7 +1006,40 @@ const searchSuggestions = items.filter((item) => {
       </div>}
       {authOpen && <AuthModal onClose={() => setAuthOpen(false)} onSignedIn={setUser}/>}
       {sellOpen && <SellModal user={user} onClose={() => setSellOpen(false)} onCreated={async () => { await loadListings(); await logActivity("listing_created", { message: "A new listing was posted" }); }}/>}
-      {detail && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setDetail(null)}><section className="modal detail-modal" role="dialog" aria-modal="true"><button className="icon-button modal-close" onClick={() => setDetail(null)} aria-label="Close"><X size={20}/></button><ProductArt item={detail} large/><p className="eyebrow">{detail.category}</p><h2>{detail.title}</h2><div className="detail-price">{formatPrice(detail.price)}</div><span className="condition-tag inline-tag">{detail.condition}</span> <span style={{ display: "inline-block", margin: "8px 0", padding: "5px 9px", borderRadius: 999, fontSize: 12, fontWeight: 700, background: detail.stock_status === "out_of_stock" ? "#fee4e2" : "#dcfae6", color: detail.stock_status === "out_of_stock" ? "#b42318" : "#067647" }}>{detail.stock_status === "out_of_stock" ? "Out of Stock" : "In Stock"}</span><p>{detail.description || "No description provided."}</p><p className="product-location"><MapPin size={15}/>{detail.location || "Campus pickup"}</p><div className="seller-details"><p className="eyebrow">SELLER DETAILS</p><div className="seller-profile-row">{detail.seller_avatar_url ? <img className="seller-avatar" src={detail.seller_avatar_url} alt="Seller profile" /> : <div className="seller-avatar seller-avatar-placeholder"><UserRound size={22}/></div>}<div><strong>{detail.seller_name || "Campus seller"}</strong><small>{detail.seller_email || "College email not provided"}</small></div></div>{detail.stock_status !== "out_of_stock" && detail.seller_whatsapp ? <div className="seller-whatsapp-line"><span><strong>WhatsApp:</strong> {detail.seller_whatsapp}</span><a className="button secondary full" href={`https://wa.me/${detail.seller_whatsapp.replace(/\D/g, "")}`} target="_blank" rel="noreferrer">Contact on WhatsApp <ArrowUpRight size={16}/></a></div> : detail.stock_status === "out_of_stock" ? <p className="seller-whatsapp-missing">This item is out of stock. Contact is disabled.</p> : <p className="seller-whatsapp-missing">WhatsApp number not added by this seller.</p>}</div>{detail.seller_id === user?.id && !detail.demo && <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}><button type="button" className="button secondary" onClick={() => updateStockStatus(detail, detail.stock_status === "out_of_stock" ? "in_stock" : "out_of_stock")}>{detail.stock_status === "out_of_stock" ? "Mark In Stock" : "Mark Out of Stock"}</button><button type="button" className="button secondary" style={{ color: "#b42318" }} onClick={() => deleteListing(detail)}>Delete listing</button></div>}{detail.stock_status === "out_of_stock" ? <button className="button primary full" disabled style={{ opacity: 0.6, cursor: "not-allowed" }}>Out of Stock</button> : <button className="button primary full" onClick={() => { if (!user) { setDetail(null); setAuthOpen(true); return; } window.location.href = `mailto:${detail.seller_email || ""}?subject=${encodeURIComponent("Interested in " + detail.title)}`; }}>Email seller <ArrowUpRight size={17}/></button>}<p className="fine-print">Meet in a public campus location and inspect the item before paying. Never share passwords or verification codes.</p></section></div>}
+      {detail && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setDetail(null)}>
+        <section className="modal detail-modal" role="dialog" aria-modal="true" aria-labelledby="detail-title" style={{ maxHeight: "90dvh", overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+          <button className="icon-button modal-close" onClick={() => setDetail(null)} aria-label="Close"><X size={20}/></button>
+          <ProductArt item={detail} large/>
+          <p className="eyebrow">{detail.category}</p>
+          <h2 id="detail-title">{detail.title}</h2>
+          <div className="detail-price">{formatPrice(detail.price)}</div>
+          <span className="condition-tag inline-tag">{detail.condition}</span>
+          <span style={{ display: "inline-block", margin: "8px 0", padding: "5px 9px", borderRadius: 999, fontSize: 12, fontWeight: 700, background: detail.stock_status === "out_of_stock" ? "#fee4e2" : "#dcfae6", color: detail.stock_status === "out_of_stock" ? "#b42318" : "#067647" }}>{detail.stock_status === "out_of_stock" ? "Out of Stock" : "In Stock"}</span>
+          <p>{detail.description || "No description provided."}</p>
+          <p className="product-location"><MapPin size={15}/>{detail.location || "Campus pickup"}</p>
+          <div className="seller-details">
+            <p className="eyebrow">SELLER DETAILS</p>
+            <div className="seller-profile-row">
+              {detail.seller_avatar_url ? <img className="seller-avatar" src={detail.seller_avatar_url} alt="Seller profile" /> : <div className="seller-avatar seller-avatar-placeholder"><UserRound size={22}/></div>}
+              <div><strong>{detail.seller_name || "Campus seller"}</strong><small>{detail.seller_email || "College email not provided"}</small></div>
+            </div>
+            {detail.stock_status !== "out_of_stock" && detail.seller_whatsapp ? (() => {
+              const whatsappNumber = getIndianWhatsAppNumber(detail.seller_whatsapp);
+              return whatsappNumber
+                ? <div className="seller-whatsapp-line"><span><strong>WhatsApp:</strong> {detail.seller_whatsapp}</span><a className="button secondary full" href={`https://wa.me/${whatsappNumber}`} target="_blank" rel="noopener noreferrer">Contact on WhatsApp <ArrowUpRight size={16}/></a></div>
+                : <p className="seller-whatsapp-missing">This seller's WhatsApp number appears invalid. Ask them to update it in My Profile.</p>;
+            })() : detail.stock_status === "out_of_stock" ? <p className="seller-whatsapp-missing">This item is out of stock. Contact is disabled.</p> : <p className="seller-whatsapp-missing">WhatsApp number not added by this seller.</p>}
+          </div>
+          {isListingOwner(detail, user) && <div className="seller-listing-controls" style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16, padding: 12, border: "1px solid #e8e3da", borderRadius: 12, background: "#fffaf4" }}>
+            <p style={{ margin: 0, fontWeight: 700 }}>Manage your listing</p>
+            <button type="button" className="button secondary full" onClick={() => updateStockStatus(detail, detail.stock_status === "out_of_stock" ? "in_stock" : "out_of_stock")}>{detail.stock_status === "out_of_stock" ? "Mark In Stock" : "Mark Out of Stock"}</button>
+            <button type="button" className="button secondary full" style={{ color: "#b42318" }} onClick={() => deleteListing(detail)}>Delete listing</button>
+            <button type="button" className="button primary full" onClick={() => { setDetail(null); setPromotionItem(detail); }}>Promote Item</button>
+          </div>}
+          {detail.stock_status === "out_of_stock" ? <button className="button primary full" disabled style={{ opacity: 0.6, cursor: "not-allowed", marginTop: 12 }}>Out of Stock</button> : <button className="button primary full" style={{ marginTop: 12 }} onClick={() => { if (!user) { setDetail(null); setAuthOpen(true); return; } window.location.href = `mailto:${detail.seller_email || ""}?subject=${encodeURIComponent("Interested in " + detail.title)}`; }}>Email seller <ArrowUpRight size={17}/></button>}
+          <p className="fine-print">Meet in a public campus location and inspect the item before paying. Never share passwords or verification codes.</p>
+        </section>
+      </div>}
     </div>
   );
 }
