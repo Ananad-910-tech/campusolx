@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Search, Plus, BookOpen, Laptop, Bike, Armchair, Calculator, Shirt,
   Heart, MapPin, ShieldCheck, Menu, X, ArrowUpRight, LogOut, UserRound,
-  SlidersHorizontal, Package, Mail, CheckCircle2, AlertCircle, House, User, Phone, Camera, LayoutDashboard, Clock, ShoppingBag, Activity, Eye, RefreshCw
+  SlidersHorizontal, Package, Mail, CheckCircle2, AlertCircle, House, User, Phone, Camera, LayoutDashboard, Clock, ShoppingBag, Activity, Eye, RefreshCw, Download
 } from "lucide-react";
 import { supabase } from "./supabase";
 
@@ -243,6 +243,66 @@ export default function App() {
   const [detail, setDetail] = useState(null);
   const [promotionItem, setPromotionItem] = useState(null);
   const [mobileNav, setMobileNav] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [appInstalled, setAppInstalled] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(display-mode: standalone)").matches ||
+      window.navigator.standalone === true;
+  });
+
+  useEffect(() => {
+    function handleInstallPrompt(event) {
+      event.preventDefault();
+      setInstallPrompt(event);
+    }
+
+    function handleInstalled() {
+      setAppInstalled(true);
+      setInstallPrompt(null);
+    }
+
+    window.addEventListener("beforeinstallprompt", handleInstallPrompt);
+    window.addEventListener("appinstalled", handleInstalled);
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleInstallPrompt);
+      window.removeEventListener("appinstalled", handleInstalled);
+    };
+  }, []);
+
+  async function installCampusOLX() {
+    if (appInstalled) {
+      window.alert("CampusOLX is already installed on this device.");
+      return;
+    }
+
+    if (installPrompt) {
+      await installPrompt.prompt();
+      const choice = await installPrompt.userChoice;
+      if (choice.outcome === "accepted") {
+        setInstallPrompt(null);
+      }
+      return;
+    }
+
+    const isIOS = /iphone|ipad|ipod/i.test(window.navigator.userAgent) ||
+      (window.navigator.platform === "MacIntel" && window.navigator.maxTouchPoints > 1);
+
+    if (isIOS) {
+      window.alert(
+        "To install CampusOLX on iPhone/iPad:\n\n" +
+        "1. Open this website in Safari.\n" +
+        "2. Tap the Share button.\n" +
+        "3. Choose Add to Home Screen.\n" +
+        "4. Tap Add."
+      );
+    } else {
+      window.alert(
+        "To install CampusOLX, open your browser menu and look for \"Install app\" or \"Add to Home Screen\".\n\n" +
+        "If the option is missing, make sure you are using the deployed HTTPS website and that the browser supports PWA installation."
+      );
+    }
+  }
   useEffect(() => {
     function closeMenuOnEscape(event) { if (event.key === "Escape") setMobileNav(false); }
     window.addEventListener("keydown", closeMenuOnEscape);
@@ -743,6 +803,13 @@ const searchSuggestions = items.filter((item) => {
           setMobileNav(false); setShowingFavorites(false);
           document.getElementById("marketplace")?.scrollIntoView({ behavior: "smooth" });
         }}><Search size={19}/> <span>Browse Products</span></button>
+        <button type="button" className="sidebar-link" onClick={() => {
+          setMobileNav(false);
+          installCampusOLX();
+        }}>
+          <Download size={19}/>
+          <span>{appInstalled ? "App Installed" : "Install CampusOLX"}</span>
+        </button>
         <button className={`sidebar-link ${showingFavorites ? "active" : ""}`} onClick={() => {
           setMobileNav(false);
           if (!user) { setAuthOpen(true); return; }
