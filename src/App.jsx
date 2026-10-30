@@ -901,13 +901,6 @@ const searchSuggestions = items.filter((item) => {
           setMobileNav(false); setShowingFavorites(false);
           document.getElementById("marketplace")?.scrollIntoView({ behavior: "smooth" });
         }}><Search size={19}/> <span>Browse Products</span></button>
-        <button type="button" className="sidebar-link" onClick={() => {
-          setMobileNav(false);
-          installCampusOLX();
-        }}>
-          <Download size={19}/>
-          <span>{appInstalled ? "App Installed" : "Install CampusOLX"}</span>
-        </button>
         <button className={`sidebar-link ${showingFavorites ? "active" : ""}`} onClick={() => {
           setMobileNav(false);
           if (!user) { setAuthOpen(true); return; }
@@ -930,6 +923,18 @@ const searchSuggestions = items.filter((item) => {
       </aside>
         </div>
       </header>
+
+      {!appInstalled && (
+        <button
+          type="button"
+          className="bottom-install-button"
+          onClick={installCampusOLX}
+          aria-label="Install CampusOLX"
+        >
+          <Download size={19} />
+          <span>Install CampusOLX</span>
+        </button>
+      )}
 
       <main>
         <section className="hero">
