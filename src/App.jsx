@@ -42,7 +42,20 @@ function formatPrice(value) {
 }
 
 function isListingOwner(item, user) {
-  return Boolean(user && item && !item.demo && !String(item.id).startsWith("demo-") && String(item.seller_id || "") === String(user.id || ""));
+  console.log("OWNER CHECK:", {
+    title: item?.title,
+    listingId: item?.id,
+    listingSellerId: item?.seller_id,
+    loggedInUserId: user?.id
+  });
+
+  return Boolean(
+    user &&
+    item &&
+    !item.demo &&
+    !String(item.id).startsWith("demo-") &&
+    String(item.seller_id || "") === String(user.id || "")
+  );
 }
 
 function getIndianWhatsAppNumber(value) {
@@ -96,6 +109,15 @@ function AuthModal({ onClose, onSignedIn }) {
           password
         });
         if (error) throw error;
+
+        // Supabase may return an empty identities array when this email is
+        // already registered. In that case, guide the student to Sign in.
+        if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+          setMessage("Account already exists. Please sign in with this email instead.");
+          setMode("login");
+          return;
+        }
+
         if (!data.session) {
           setMessage("Account created. Check your email to confirm your account, then sign in.");
           setMode("login");
@@ -113,7 +135,14 @@ function AuthModal({ onClose, onSignedIn }) {
         onClose();
       }
     } catch (err) {
-      setError(err.message || "Could not sign in. Please try again.");
+      const authError = String(err?.message || "");
+      if (/already (registered|exists)|user already registered|email.*(taken|registered)/i.test(authError)) {
+        setMessage("Account already exists. Please sign in with this email instead.");
+        setMode("login");
+        setError("");
+      } else {
+        setError(authError || "Could not sign in. Please try again.");
+      }
     } finally {
       setBusy(false);
     }
@@ -147,7 +176,16 @@ function AuthModal({ onClose, onSignedIn }) {
 }
 
 function SellModal({ onClose, onCreated, user }) {
-  const [form, setForm] = useState({ title: "", category: "Books", price: "", condition: "Good", location: "Campus pickup", description: "" });
+  const [form, setForm] = useState({
+    title: "",
+    category: "Books",
+    listing_type: "sell",
+    looking_for: "",
+    price: "",
+    condition: "Good",
+    location: "Campus pickup",
+    description: ""
+  });
   const [image, setImage] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -156,8 +194,24 @@ function SellModal({ onClose, onCreated, user }) {
   async function submit(event) {
     event.preventDefault();
     setError("");
-    if (!user) { setError("Please sign in with your college email before posting."); return; }
-    if (image && image.size > 5 * 1024 * 1024) { setError("Image must be smaller than 5 MB."); return; }
+
+    if (!user) {
+      setError("Please sign in with your college email before posting.");
+      return;
+    }
+    if (form.listing_type !== "sell" && !form.looking_for.trim()) {
+      setError("Please mention what item you want in exchange.");
+      return;
+    }
+    if (form.listing_type !== "exchange" && (form.price === "" || !Number.isFinite(Number(form.price)) || Number(form.price) < 0)) {
+      setError("Please enter a valid price.");
+      return;
+    }
+    if (image && image.size > 5 * 1024 * 1024) {
+      setError("Image must be smaller than 5 MB.");
+      return;
+    }
+
     setBusy(true);
     try {
       let image_url = "";
@@ -166,20 +220,21 @@ function SellModal({ onClose, onCreated, user }) {
         const imagePath = `${user.id}/${crypto.randomUUID()}.${extension}`;
         const { error: uploadError } = await supabase.storage
           .from("product-images")
-          .upload(imagePath, image, {
-            contentType: image.type,
-            upsert: false
-          });
+          .upload(imagePath, image, { contentType: image.type, upsert: false });
         if (uploadError) throw uploadError;
+
         const { data: publicUrlData } = supabase.storage
           .from("product-images")
           .getPublicUrl(imagePath);
         image_url = publicUrlData.publicUrl;
       }
+
       const { error: insertError } = await supabase.from("listings").insert({
         title: form.title.trim(),
         category: form.category,
-        price: Number(form.price),
+        listing_type: form.listing_type,
+        looking_for: form.listing_type === "sell" ? null : form.looking_for.trim(),
+        price: form.listing_type === "exchange" ? 0 : Number(form.price),
         condition: form.condition,
         location: form.location.trim(),
         description: form.description.trim(),
@@ -193,6 +248,7 @@ function SellModal({ onClose, onCreated, user }) {
         stock_status: "in_stock"
       });
       if (insertError) throw insertError;
+
       await onCreated();
       onClose();
     } catch (err) {
@@ -206,23 +262,66 @@ function SellModal({ onClose, onCreated, user }) {
     <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && onClose()}>
       <section className="modal sell-modal" role="dialog" aria-modal="true" aria-labelledby="sell-title">
         <button className="icon-button modal-close" onClick={onClose} aria-label="Close"><X size={20}/></button>
-        <p className="eyebrow">GIVE IT A SECOND LIFE</p><h2 id="sell-title">Post an item</h2>
-        <p className="muted">Be clear about the condition and arrange a safe campus handover.</p>
+        <p className="eyebrow">GIVE IT A SECOND LIFE</p>
+        <h2 id="sell-title">Post an item</h2>
+        <p className="muted">Sell your item, exchange it, or give students both options.</p>
+
         <form onSubmit={submit} className="form-stack">
-          <label>Item title<input required maxLength="90" value={form.title} onChange={e => update("title", e.target.value)} placeholder="e.g. Engineering Mathematics book"/></label>
+          <label>Item title
+            <input required maxLength="90" value={form.title} onChange={e => update("title", e.target.value)} placeholder="e.g. Engineering Mathematics book"/>
+          </label>
+
           <div className="form-row">
-            <label>Category<select value={form.category} onChange={e => update("category", e.target.value)}>{categories.slice(1).map(c => <option key={c.name}>{c.name}</option>)}</select></label>
-            <label>Price (₹)<input required type="number" min="0" max="10000000" step="1" value={form.price} onChange={e => update("price", e.target.value)} placeholder="250"/></label>
+            <label>Category
+              <select value={form.category} onChange={e => update("category", e.target.value)}>
+                {categories.slice(1).map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                {!categories.some(c => c.name === "Sports equipment") && <option value="Sports equipment">Sports equipment</option>}
+              </select>
+            </label>
+            <label>Listing type
+              <select value={form.listing_type} onChange={e => update("listing_type", e.target.value)}>
+                <option value="sell">Sell my item</option>
+                <option value="exchange">Exchange my item</option>
+                <option value="both">Sell or Exchange</option>
+              </select>
+            </label>
           </div>
+
+          {form.listing_type !== "sell" && (
+            <label>What would you like in exchange?
+              <input required maxLength="150" value={form.looking_for} onChange={e => update("looking_for", e.target.value)} placeholder="e.g. Another first-year engineering book"/>
+            </label>
+          )}
+
+          {form.listing_type !== "exchange" && (
+            <label>Price (₹)
+              <input required type="number" min="0" max="10000000" step="1" value={form.price} onChange={e => update("price", e.target.value)} placeholder="250"/>
+            </label>
+          )}
+
           <div className="form-row">
-            <label>Condition<select value={form.condition} onChange={e => update("condition", e.target.value)}>{["Like new", "Good", "Used", "For parts"].map(v => <option key={v}>{v}</option>)}</select></label>
-            <label>Pickup location<input required maxLength="80" value={form.location} onChange={e => update("location", e.target.value)} placeholder="Campus pickup"/></label>
+            <label>Condition
+              <select value={form.condition} onChange={e => update("condition", e.target.value)}>
+                {["Like new", "Good", "Used", "For parts"].map(v => <option key={v} value={v}>{v}</option>)}
+              </select>
+            </label>
+            <label>Pickup location
+              <input required maxLength="80" value={form.location} onChange={e => update("location", e.target.value)} placeholder="Campus pickup"/>
+            </label>
           </div>
-          <label>Description<textarea rows="3" maxLength="1200" value={form.description} onChange={e => update("description", e.target.value)} placeholder="Describe the item, age, and any defects…"/></label>
-          <label>Product photo <span className="muted inline-muted">(optional, max 5 MB)</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e => setImage(e.target.files?.[0] || null)}/></label>
+
+          <label>Description
+            <textarea rows="3" maxLength="1200" value={form.description} onChange={e => update("description", e.target.value)} placeholder="Describe the item, age, and any defects…"/>
+          </label>
+          <label>Product photo <span className="muted inline-muted">(optional, max 5 MB)</span>
+            <input type="file" accept="image/png,image/jpeg,image/webp" onChange={e => setImage(e.target.files?.[0] || null)}/>
+          </label>
+
           {image && image.size > 5 * 1024 * 1024 && <p className="notice error">Image must be smaller than 5 MB.</p>}
           {error && <p className="notice error"><AlertCircle size={17}/>{error}</p>}
-          <button className="button primary full" disabled={busy || (image && image.size > 5 * 1024 * 1024)}>{busy ? "Publishing…" : "Publish listing"} <ArrowUpRight size={17}/></button>
+          <button className="button primary full" disabled={busy || (image && image.size > 5 * 1024 * 1024)}>
+            {busy ? "Publishing…" : "Publish listing"} <ArrowUpRight size={17}/>
+          </button>
         </form>
       </section>
     </div>
@@ -241,7 +340,6 @@ export default function App() {
   const [authOpen, setAuthOpen] = useState(false);
   const [sellOpen, setSellOpen] = useState(false);
   const [detail, setDetail] = useState(null);
-  const [promotionItem, setPromotionItem] = useState(null);
   const [mobileNav, setMobileNav] = useState(false);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [appInstalled, setAppInstalled] = useState(() => {
@@ -901,14 +999,6 @@ const searchSuggestions = items.filter((item) => {
               {isListingOwner(item, user) && <div className="seller-listing-controls" style={{ display: "flex", gap: 8, padding: "0 12px 12px", flexWrap: "wrap" }}>
                 <button type="button" className="button secondary" style={{ fontSize: 12, padding: "7px 10px" }} onClick={() => updateStockStatus(item, item.stock_status === "out_of_stock" ? "in_stock" : "out_of_stock")}>{item.stock_status === "out_of_stock" ? "Mark In Stock" : "Mark Out of Stock"}</button>
                 <button type="button" className="button secondary" style={{ fontSize: 12, padding: "7px 10px", color: "#b42318" }} onClick={() => deleteListing(item)}>Delete</button>
-                <button
-  type="button"
-  className="button primary"
-  style={{ fontSize: 12, padding: "7px 10px" }}
-  onClick={() => setPromotionItem(item)}
->
-  Promote Item
-</button>
               </div>}
              
 <button
@@ -1047,30 +1137,6 @@ const searchSuggestions = items.filter((item) => {
           <p className="fine-print">Only activity recorded after the required database tables are set up will appear. Older activity is not reconstructed.</p>
         </section>
       </div>}
-      {promotionItem && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setPromotionItem(null)}>
-        <section className="modal" role="dialog" aria-modal="true" aria-labelledby="promotion-title">
-          <button className="icon-button modal-close" onClick={() => setPromotionItem(null)} aria-label="Close"><X size={20}/></button>
-          <p className="eyebrow">GET MORE VISIBILITY</p>
-          <h2 id="promotion-title">Promote your item</h2>
-          <p className="muted">Choose a promotion plan for <strong>{promotionItem.title}</strong>.</p>
-          <div className="form-stack" style={{ marginTop: 18 }}>
-            <div style={{ border: "1px solid #e8e3da", borderRadius: 12, padding: 14 }}>
-              <strong>Quick Boost · 3 days</strong>
-              <p style={{ margin: "6px 0 0" }}>₹19</p>
-            </div>
-            <div style={{ border: "1px solid #f36b3f", borderRadius: 12, padding: 14 }}>
-              <strong>Featured Listing · 7 days</strong>
-              <p style={{ margin: "6px 0 0" }}>₹49</p>
-            </div>
-            <div style={{ border: "1px solid #e8e3da", borderRadius: 12, padding: 14 }}>
-              <strong>Premium Boost · 14 days</strong>
-              <p style={{ margin: "6px 0 0" }}>₹89</p>
-            </div>
-          </div>
-          <p className="notice" style={{ marginTop: 16 }}>Payments are not connected yet. You will not be charged. These are proposed prices only.</p>
-          <button className="button primary full" onClick={() => setPromotionItem(null)}>Got it</button>
-        </section>
-      </div>}
       {authOpen && <AuthModal onClose={() => setAuthOpen(false)} onSignedIn={setUser}/>}
       {sellOpen && <SellModal user={user} onClose={() => setSellOpen(false)} onCreated={async () => { await loadListings(); await logActivity("listing_created", { message: "A new listing was posted" }); }}/>}
       {detail && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setDetail(null)}>
@@ -1101,7 +1167,6 @@ const searchSuggestions = items.filter((item) => {
             <p style={{ margin: 0, fontWeight: 700 }}>Manage your listing</p>
             <button type="button" className="button secondary full" onClick={() => updateStockStatus(detail, detail.stock_status === "out_of_stock" ? "in_stock" : "out_of_stock")}>{detail.stock_status === "out_of_stock" ? "Mark In Stock" : "Mark Out of Stock"}</button>
             <button type="button" className="button secondary full" style={{ color: "#b42318" }} onClick={() => deleteListing(detail)}>Delete listing</button>
-            <button type="button" className="button primary full" onClick={() => { setDetail(null); setPromotionItem(detail); }}>Promote Item</button>
           </div>}
           {detail.stock_status === "out_of_stock" ? <button className="button primary full" disabled style={{ opacity: 0.6, cursor: "not-allowed", marginTop: 12 }}>Out of Stock</button> : <button className="button primary full" style={{ marginTop: 12 }} onClick={() => { if (!user) { setDetail(null); setAuthOpen(true); return; } window.location.href = `mailto:${detail.seller_email || ""}?subject=${encodeURIComponent("Interested in " + detail.title)}`; }}>Email seller <ArrowUpRight size={17}/></button>}
           <p className="fine-print">Meet in a public campus location and inspect the item before paying. Never share passwords or verification codes.</p>
