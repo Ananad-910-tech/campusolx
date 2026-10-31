@@ -42,13 +42,6 @@ function formatPrice(value) {
 }
 
 function isListingOwner(item, user) {
-  console.log("OWNER CHECK:", {
-    title: item?.title,
-    listingId: item?.id,
-    listingSellerId: item?.seller_id,
-    loggedInUserId: user?.id
-  });
-
   return Boolean(
     user &&
     item &&
@@ -184,7 +177,8 @@ function SellModal({ onClose, onCreated, user }) {
     price: "",
     condition: "Good",
     location: "Campus pickup",
-    description: ""
+    description: "",
+    quantity: "1"
   });
   const [image, setImage] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -205,6 +199,10 @@ function SellModal({ onClose, onCreated, user }) {
     }
     if (form.listing_type !== "exchange" && (form.price === "" || !Number.isFinite(Number(form.price)) || Number(form.price) < 0)) {
       setError("Please enter a valid price.");
+      return;
+    }
+    if (form.listing_type !== "exchange" && (!Number.isInteger(Number(form.quantity)) || Number(form.quantity) < 1 || Number(form.quantity) > 500)) {
+      setError("Enter an available quantity between 1 and 500.");
       return;
     }
     if (image && image.size > 5 * 1024 * 1024) {
@@ -245,6 +243,8 @@ function SellModal({ onClose, onCreated, user }) {
         seller_avatar_url: user.user_metadata?.avatar_url || "",
         seller_whatsapp: user.user_metadata?.whatsapp || "",
         status: "available",
+        quantity: form.listing_type === "exchange" ? 1 : Number(form.quantity),
+        booked_quantity: 0,
         stock_status: "in_stock"
       });
       if (insertError) throw insertError;
@@ -290,6 +290,13 @@ function SellModal({ onClose, onCreated, user }) {
           {form.listing_type !== "sell" && (
             <label>What would you like in exchange?
               <input required maxLength="150" value={form.looking_for} onChange={e => update("looking_for", e.target.value)} placeholder="e.g. Another first-year engineering book"/>
+            </label>
+          )}
+
+          {form.listing_type !== "exchange" && (
+            <label>Available quantity
+              <input required type="number" min="1" max="500" step="1" value={form.quantity} onChange={e => update("quantity", e.target.value)} placeholder="e.g. 5"/>
+              <small className="muted">How many units can students book?</small>
             </label>
           )}
 
@@ -340,8 +347,15 @@ export default function App() {
   const [authOpen, setAuthOpen] = useState(false);
   const [sellOpen, setSellOpen] = useState(false);
   const [detail, setDetail] = useState(null);
+  const [bookingQuantity, setBookingQuantity] = useState(1);
+  const [bookingBusy, setBookingBusy] = useState(false);
+  const [bookingMessage, setBookingMessage] = useState("");
   const [mobileNav, setMobileNav] = useState(false);
   const [installPrompt, setInstallPrompt] = useState(null);
+  const [installDismissed, setInstallDismissed] = useState(() => {
+    try { return window.localStorage.getItem("campusolx-install-dismissed") === "true"; }
+    catch { return false; }
+  });
   const [appInstalled, setAppInstalled] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.matchMedia("(display-mode: standalone)").matches ||
@@ -368,7 +382,13 @@ export default function App() {
     };
   }, []);
 
+  function dismissInstallBanner() {
+    setInstallDismissed(true);
+    try { window.localStorage.setItem("campusolx-install-dismissed", "true"); } catch {}
+  }
+
   async function installCampusOLX() {
+    setMobileNav(false);
     if (appInstalled) {
       window.alert("CampusOLX is already installed on this device.");
       return;
@@ -422,6 +442,16 @@ export default function App() {
   const [profileHasBeenSaved, setProfileHasBeenSaved] = useState(false);
   const [profileMessage, setProfileMessage] = useState("");
 
+  // Start each account panel at its top instead of preserving an old scroll position.
+  useEffect(() => {
+    if (!dashboardOpen && !profileOpen) return;
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    window.requestAnimationFrame(() => {
+      const panel = document.querySelector(dashboardOpen ? ".dashboard-modal" : ".profile-modal");
+      if (panel) panel.scrollTop = 0;
+    });
+  }, [dashboardOpen, profileOpen]);
+
   useEffect(() => {
     if (profileOpen && user) {
       setProfileName(user.user_metadata?.display_name || "");
@@ -450,14 +480,16 @@ export default function App() {
   async function openDashboard() {
     if (!user) { setAuthOpen(true); return; }
     setMobileNav(false);
+    setProfileOpen(false);
     setDashboardOpen(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
     setDashboardLoading(true);
     setDashboardError("");
     try {
       const [listingsResult, viewsResult, transactionsResult, activityResult] = await Promise.all([
-        supabase.from("listings").select("id,title,price,status,created_at,category,image_url").eq("seller_id", user.id).order("created_at", { ascending: false }),
+        supabase.from("listings").select("id,title,price,status,created_at,category,image_url,quantity,booked_quantity,stock_status").eq("seller_id", user.id).order("created_at", { ascending: false }),
         supabase.from("listing_views").select("id,listing_id,viewed_at").eq("user_id", user.id).order("viewed_at", { ascending: false }).limit(20),
-        supabase.from("transactions").select("id,listing_id,buyer_id,seller_id,status,created_at,completed_at,listings(title,price)").or(`buyer_id.eq.${user.id},seller_id.eq.${user.id}`).order("created_at", { ascending: false }).limit(20),
+        supabase.from("transactions").select("id,listing_id,buyer_id,seller_id,status,quantity,created_at,completed_at,listings(title,price)").or(`buyer_id.eq.${user.id},seller_id.eq.${user.id}`).order("created_at", { ascending: false }).limit(20),
         supabase.from("account_activity").select("id,event_type,details,created_at").eq("user_id", user.id).order("created_at", { ascending: false }).limit(20)
       ]);
       const firstError = listingsResult.error || viewsResult.error || transactionsResult.error || activityResult.error;
@@ -601,6 +633,52 @@ async function toggleFavorite(item) {
         if (error) console.warn("Could not record listing view:", error.message);
       });
       logActivity("listing_viewed", { title: item.title, listing_id: item.id }).catch(() => {});
+    }
+  }
+
+  async function bookListing(item) {
+    if (!user) { setAuthOpen(true); return; }
+    if (!item || item.demo || String(item.id).startsWith("demo-")) {
+      setBookingMessage("Demo items cannot be booked.");
+      return;
+    }
+    if (String(item.seller_id || "") === String(user.id || "")) {
+      setBookingMessage("You cannot book your own listing.");
+      return;
+    }
+    const available = Math.max(0, Number(item.quantity ?? 1) - Number(item.booked_quantity ?? 0));
+    if (available < 1 || item.stock_status === "out_of_stock") {
+      setBookingMessage("This item is out of stock.");
+      return;
+    }
+    if (bookingQuantity < 1 || bookingQuantity > available) {
+      setBookingMessage(`Only ${available} item(s) are available.`);
+      return;
+    }
+    setBookingBusy(true);
+    setBookingMessage("");
+    try {
+      // The database function locks the listing row and updates stock atomically,
+      // preventing two customers from booking the same last unit.
+      const { data, error } = await supabase.rpc("book_listing", {
+        p_listing_id: item.id,
+        p_quantity: bookingQuantity
+      });
+      if (error) throw error;
+      const result = Array.isArray(data) ? data[0] : data;
+      const booked = Number(result?.booked_quantity ?? (Number(item.booked_quantity || 0) + bookingQuantity));
+      const total = Number(result?.quantity ?? item.quantity ?? 1);
+      const next = { ...item, booked_quantity: booked, quantity: total, stock_status: booked >= total ? "out_of_stock" : "in_stock" };
+      setItems(current => current.map(row => String(row.id) === String(item.id) ? next : row));
+      setDetail(current => current && String(current.id) === String(item.id) ? next : current);
+      setBookingMessage("Booking confirmed! The available quantity has been updated.");
+      setBookingQuantity(1);
+      await logActivity("listing_booked", { title: item.title, listing_id: item.id, quantity: bookingQuantity });
+      await loadListings();
+    } catch (error) {
+      setBookingMessage(error.message || "Could not book this item. Please try again.");
+    } finally {
+      setBookingBusy(false);
     }
   }
 
@@ -758,7 +836,16 @@ const filtered = useMemo(() => items.filter(item => {
   const favoriteMatch =
     !showingFavorites || favoriteIds.some(id => String(id) === String(item.id));
 
-  return categoryMatch && searchMatch && favoriteMatch;
+  // Automatically hide sold-out listings from the customer marketplace.
+  // Keep the database row intact so the seller dashboard and booking history remain available.
+  const availableQuantity = Math.max(
+    0,
+    Number(item.quantity ?? 1) - Number(item.booked_quantity ?? 0)
+  );
+  const isAvailable =
+    item.stock_status !== "out_of_stock" && availableQuantity > 0;
+
+  return categoryMatch && searchMatch && favoriteMatch && isAvailable;
 }), [items, activeCategory, search, showingFavorites, favoriteIds]);
 
 const searchSuggestions = items.filter((item) => {
@@ -792,7 +879,7 @@ const searchSuggestions = items.filter((item) => {
       <div className="announcement"><span className="announcement-dot"/> Made for campus life <span className="announcement-separator">·</span> Buy better. Waste less. <span className="announcement-right">A student-to-student marketplace</span></div>
       <header className="site-header">
         <a className="brand" href="/" aria-label="CampusOLX home" onClick={e => { e.preventDefault(); window.location.reload(); }}>
-          <img className="campusolx-logo-mark" src="/campusolx-logo.png" alt="CampusOLX logo" style={{ width: 42, height: 42, objectFit: "contain", display: "block", flexShrink: 0 }} /><span className="brand-name">campus<span>olx</span><small>YOUR CAMPUS MARKETPLACE</small></span>
+          <img className="campusolx-logo-mark" src="/campusolx-logo.png" alt="CampusOLX logo" style={{ width: 72, height: 72, minWidth: 72, objectFit: "contain", display: "block", flexShrink: 0 }} /><span className="brand-name">campus<span>olx</span><small>YOUR CAMPUS MARKETPLACE</small></span>
         </a>
         {/* <div className="header-search"><Search size={19}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search books, electronics, cycles…"/><kbd>⌘ K</kbd></div> */}
         
@@ -895,45 +982,72 @@ const searchSuggestions = items.filter((item) => {
         <div className="sidebar-heading">MENU</div>
         <button className="sidebar-link" onClick={() => {
           setActiveCategory("All items"); setSearch(""); setShowingFavorites(false); setMobileNav(false);
+          setDashboardOpen(false); setProfileOpen(false); setSellOpen(false);
           window.scrollTo({ top: 0, behavior: "smooth" });
         }}><House size={19}/> <span>Home</span></button>
         <button className="sidebar-link" onClick={() => {
           setMobileNav(false); setShowingFavorites(false);
+          setDashboardOpen(false); setProfileOpen(false); setSellOpen(false);
           document.getElementById("marketplace")?.scrollIntoView({ behavior: "smooth" });
         }}><Search size={19}/> <span>Browse Products</span></button>
         <button className={`sidebar-link ${showingFavorites ? "active" : ""}`} onClick={() => {
           setMobileNav(false);
+          setDashboardOpen(false); setProfileOpen(false); setSellOpen(false);
           if (!user) { setAuthOpen(true); return; }
           setShowingFavorites(true);
           document.getElementById("marketplace")?.scrollIntoView({ behavior: "smooth" });
         }}><Heart size={19}/> <span>My Favorites</span></button>
         <button className="sidebar-link" onClick={() => {
           setMobileNav(false);
+          setDashboardOpen(false); setProfileOpen(false);
           if (user) setSellOpen(true); else setAuthOpen(true);
         }}><Plus size={19}/> <span>Sell an Item</span></button>
-        <button className="sidebar-link" onClick={openDashboard}><LayoutDashboard size={19}/> <span>Student Dashboard</span></button>
         <button className="sidebar-link" onClick={() => {
           setMobileNav(false);
-          if (!user) setAuthOpen(true); else setProfileOpen(true);
+          setProfileOpen(false);
+          openDashboard();
+        }}><LayoutDashboard size={19}/> <span>Student Dashboard</span></button>
+        <button className="sidebar-link" onClick={() => {
+          setMobileNav(false);
+          if (!user) {
+            setAuthOpen(true);
+            return;
+          }
+          setDashboardOpen(false);
+          setProfileOpen(true);
         }}><UserRound size={19}/> <span>My Profile</span></button>
         <div className="sidebar-bottom">
           <div className="sidebar-note"><ShieldCheck size={17}/><span>Made for your campus community</span></div>
+          <button className="sidebar-signout" onClick={() => { setMobileNav(false); installCampusOLX(); }}>
+            <Download size={16}/> {appInstalled ? "CampusOLX Installed" : "Install CampusOLX"}
+          </button>
           {user ? <button className="sidebar-signout" onClick={signOut}><LogOut size={16}/> Sign out</button> : <button className="sidebar-signout" onClick={() => setAuthOpen(true)}><UserRound size={16}/> Sign in</button>}
         </div>
       </aside>
         </div>
       </header>
 
-      {!appInstalled && (
-        <button
-          type="button"
-          className="bottom-install-button"
-          onClick={installCampusOLX}
-          aria-label="Install CampusOLX"
-        >
-          <Download size={19} />
-          <span>Install CampusOLX</span>
-        </button>
+      {!appInstalled && !installDismissed && (
+        <div className="bottom-install-wrap" style={{ position: "fixed", zIndex: 80, left: 10, right: 10, bottom: "max(10px, env(safe-area-inset-bottom))", width: "auto", maxWidth: 520, margin: "0 auto", display: "flex", justifyContent: "center", alignItems: "center", gap: 8, padding: 8, borderRadius: 18, background: "rgba(255,255,255,0.94)", boxShadow: "0 8px 28px rgba(0,0,0,0.14)", boxSizing: "border-box", pointerEvents: "none" }}>
+          <button
+            type="button"
+            className="bottom-install-button"
+            onClick={installCampusOLX}
+            aria-label="Install CampusOLX"
+            style={{ position: "static", pointerEvents: "auto", flex: "1 1 170px", minWidth: 0, maxWidth: 280, minHeight: 48, padding: "12px 14px", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, whiteSpace: "nowrap", fontSize: "clamp(13px, 3.8vw, 16px)" }}
+          >
+            <Download size={19} />
+            <span>Install CampusOLX</span>
+          </button>
+          <button
+            type="button"
+            className="button secondary"
+            onClick={dismissInstallBanner}
+            style={{ borderRadius: 999, padding: "12px clamp(12px, 3.5vw, 18px)", minHeight: 48, minWidth: 88, flex: "0 0 auto", pointerEvents: "auto", background: "#fff", boxShadow: "0 5px 18px #00000018", whiteSpace: "nowrap", fontSize: "clamp(13px, 3.6vw, 15px)" }}
+          >
+            Not now
+          </button>
+        </div>
       )}
 
       <main>
@@ -965,32 +1079,53 @@ const searchSuggestions = items.filter((item) => {
 
         <section id="marketplace" className="marketplace section-wrap">
      
-<div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-  <button
-    className="button secondary filter-button"
-    onClick={() => setShowingFavorites(value => !value)}
-  >
-    <Heart
-      size={17}
-      fill={showingFavorites ? "currentColor" : "none"}
-    />
-    {showingFavorites ? "Show All Items" : "Show Favorites"}
-  </button>
+<div
+            className="marketplace-filter-row"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              flexWrap: "nowrap",
+              overflowX: "auto",
+              overflowY: "hidden",
+              width: "100%",
+              paddingBottom: "8px",
+              scrollbarWidth: "thin"
+            }}
+          >
+            <button
+              className="button secondary filter-button"
+              style={{ flex: "0 0 auto" }}
+              onClick={() => setShowingFavorites(value => !value)}
+            >
+              <Heart size={17} fill={showingFavorites ? "currentColor" : "none"}/>
+              {showingFavorites ? "Show All Items" : "Show Favorites"}
+            </button>
 
-  <button
-    className="button secondary filter-button"
-    onClick={() => {
-      setActiveCategory("All items");
-      setSearch("");
-      setShowingFavorites(false);
-    }}
-  >
-    <SlidersHorizontal size={17} /> Clear filters
-  </button>
-</div>
+            <button
+              className="button secondary filter-button"
+              style={{ flex: "0 0 auto" }}
+              onClick={() => {
+                setActiveCategory("All items");
+                setSearch("");
+                setShowingFavorites(false);
+              }}
+            >
+              <SlidersHorizontal size={17}/> Clear filters
+            </button>
 
-          <div className="category-list">
-            {categories.map(({name,icon:Icon}) => <button key={name} className={`category-chip ${activeCategory === name ? "selected" : ""}`} onClick={() => setActiveCategory(name)}><Icon size={17}/>{name}</button>)}
+            {categories.map(({ name, icon: Icon }) => (
+              <button
+                key={name}
+                type="button"
+                className={`category-chip ${activeCategory === name ? "selected" : ""}`}
+                style={{ flex: "0 0 auto" }}
+                onClick={() => setActiveCategory(name)}
+              >
+                <Icon size={17}/>
+                {name}
+              </button>
+            ))}
           </div>
 
           {dbError && <div className="demo-banner"><AlertCircle size={17}/><span>{dbError}</span></div>}
@@ -998,7 +1133,7 @@ const searchSuggestions = items.filter((item) => {
           <div className="product-grid">
             {filtered.map((item, index) => <article className="product-card" key={item.id}>
               <button className="product-click-area" onClick={() => openListingDetail(item)} aria-label={`View ${item.title}`}>
-                <div className="product-image-wrap"><ProductArt item={item}/><span className="condition-tag">{item.condition}</span>{item.stock_status === "out_of_stock" && <span className="stock-status-badge" style={{ position: "absolute", left: 10, top: 10, zIndex: 2, background: "#b42318", color: "white", padding: "5px 9px", borderRadius: 999, fontSize: 12, fontWeight: 700 }}>Out of Stock</span>}</div>
+                <div className="product-image-wrap"><ProductArt item={item}/><span className="condition-tag">{item.condition}</span>{(item.stock_status === "out_of_stock" || Number(item.booked_quantity || 0) >= Number(item.quantity ?? 1)) && <span className="stock-status-badge" style={{ position: "absolute", left: 10, top: 10, zIndex: 2, background: "#b42318", color: "white", padding: "5px 9px", borderRadius: 999, fontSize: 12, fontWeight: 700 }}>Out of Stock</span>}</div>
                 <div className="product-info"><div className="product-category">{item.category}</div><h3>{item.title}</h3><div className="product-price">{formatPrice(item.price)}</div><div className="product-location"><MapPin size={14}/>{item.location || "Campus pickup"}</div></div>
               </button>
               {isListingOwner(item, user) && <div className="seller-listing-controls" style={{ display: "flex", gap: 8, padding: "0 12px 12px", flexWrap: "wrap" }}>
@@ -1042,7 +1177,7 @@ const searchSuggestions = items.filter((item) => {
         </section>
       </main>
 
-      <footer className="site-footer"><a className="brand footer-brand" href="#"><img className="campusolx-logo-mark" src="/campusolx-logo.png" alt="CampusOLX logo" style={{ width: 42, height: 42, objectFit: "contain", display: "block", flexShrink: 0 }} /><span className="brand-name">campus<span>olx</span><small>YOUR CAMPUS MARKETPLACE</small></span></a><p>Made for campus life. Built for second chances.</p><span>© {new Date().getFullYear()} CampusOLX</span></footer>
+      <footer className="site-footer"><a className="brand footer-brand" href="#"><img className="campusolx-logo-mark" src="/campusolx-logo.png" alt="CampusOLX logo" style={{ width: 72, height: 72, minWidth: 72, objectFit: "contain", display: "block", flexShrink: 0 }} /><span className="brand-name">campus<span>olx</span><small>YOUR CAMPUS MARKETPLACE</small></span></a><p>Made for campus life. Built for second chances.</p><span>© {new Date().getFullYear()} CampusOLX</span></footer>
 
       {profileOpen && user && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setProfileOpen(false)}>
         <section className="modal profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-title">
@@ -1117,7 +1252,7 @@ const searchSuggestions = items.filter((item) => {
           <button className="icon-button modal-close" onClick={() => setDashboardOpen(false)} aria-label="Close"><X size={20}/></button>
           <p className="eyebrow">YOUR CAMPUS ACTIVITY</p>
           <h2 id="dashboard-title">Student Dashboard</h2>
-          <p className="muted">Your listings, viewing history, transactions, and account activity.</p>
+          <p className="muted">Your listings, viewing history, transactions, and Student Activity.</p>
           <button className="button secondary dashboard-refresh" onClick={openDashboard} disabled={dashboardLoading}><RefreshCw size={15}/> Refresh history</button>
           {dashboardError && <p className="notice error"><AlertCircle size={16}/>{dashboardError}</p>}
           {dashboardLoading ? <p className="dashboard-empty">Loading your activity…</p> : <>
@@ -1127,7 +1262,7 @@ const searchSuggestions = items.filter((item) => {
               <div><ShoppingBag size={19}/><strong>{dashboardData.transactions.length}</strong><span>Transactions</span></div>
             </div>
             <section className="dashboard-section"><h3><Package size={17}/> My selling history</h3>
-              {dashboardData.listings.length ? <div className="dashboard-list">{dashboardData.listings.map(item => <div className="dashboard-row" key={item.id}><div><strong>{item.title}</strong><small>{item.category || "Listing"} · {item.created_at ? new Date(item.created_at).toLocaleDateString() : "Date unavailable"}</small></div><span className="dashboard-status">{item.status || "available"}</span><b>{formatPrice(item.price)}</b></div>)}</div> : <p className="dashboard-empty">You haven't posted any real listings yet.</p>}
+              {dashboardData.listings.length ? <div className="dashboard-list">{dashboardData.listings.map(item => <div className="dashboard-row" key={item.id}><div><strong>{item.title}</strong><small>{item.category || "Listing"} · Total: {item.quantity ?? 1} · Booked: {item.booked_quantity ?? 0} · Available: {Math.max(0, Number(item.quantity ?? 1) - Number(item.booked_quantity ?? 0))}</small></div><span className="dashboard-status">{item.status || "available"}</span><b>{formatPrice(item.price)}</b></div>)}</div> : <p className="dashboard-empty">You haven't posted any real listings yet.</p>}
             </section>
             <section className="dashboard-section"><h3><Clock size={17}/> Recently viewed items</h3>
               {dashboardData.views.length ? <div className="dashboard-list">{dashboardData.views.map(view => <div className="dashboard-row" key={view.id}><div><strong>{view.listing.title}</strong><small>{view.listing.category || "Listing"} · Viewed {view.viewed_at ? new Date(view.viewed_at).toLocaleString() : "recently"}</small></div><b>{formatPrice(view.listing.price)}</b></div>)}</div> : <p className="dashboard-empty">No viewing history recorded yet. Sign in and open real listings to start building this history.</p>}
@@ -1135,8 +1270,50 @@ const searchSuggestions = items.filter((item) => {
             <section className="dashboard-section"><h3><ShoppingBag size={17}/> Bought and sold history</h3>
               {dashboardData.transactions.length ? <div className="dashboard-list">{dashboardData.transactions.map(tx => <div className="dashboard-row" key={tx.id}><div><strong>{tx.listings?.title || "Listing"}</strong><small>{tx.buyer_id === user.id ? "Buyer" : "Seller"} · {tx.created_at ? new Date(tx.created_at).toLocaleDateString() : "Date unavailable"}</small></div><span className="dashboard-status">{tx.status || "pending"}</span><b>{formatPrice(tx.listings?.price)}</b></div>)}</div> : <p className="dashboard-empty">No transactions recorded. This section will populate only after a transaction is explicitly recorded in Supabase.</p>}
             </section>
-            <section className="dashboard-section"><h3><Activity size={17}/> Account activity</h3>
-              {dashboardData.activity.length ? <div className="dashboard-list">{dashboardData.activity.map(event => <div className="dashboard-row" key={event.id}><div><strong>{({profile_updated:"Profile updated",listing_viewed:"Viewed a listing",listing_created:"Posted a listing"})[event.event_type] || event.event_type.replaceAll("_", " ")}</strong><small>{event.details?.title || event.details?.message || "CampusOLX activity"}</small></div><small>{event.created_at ? new Date(event.created_at).toLocaleString() : ""}</small></div>)}</div> : <p className="dashboard-empty">No account activity recorded yet.</p>}
+            <section className="dashboard-section">
+              <h3><Activity size={17}/> Student Activity</h3>
+              {dashboardData.activity.length ? (
+                <div className="dashboard-list">
+                  {dashboardData.activity.map(event => {
+                    const activityLabels = {
+                      profile_updated: "Profile updated",
+                      listing_viewed: "Viewed a listing",
+                      listing_created: "Posted a listing",
+                      listing_stock_updated: "Updated listing stock",
+                      listing_deleted: "Deleted a listing",
+                      listing_booked: "Booked an item"
+                    };
+
+                    return (
+                      <div className="dashboard-row" key={event.id}>
+                        <div>
+                          <strong>
+                            {activityLabels[event.event_type] ||
+                              event.event_type.replaceAll("_", " ")}
+                          </strong>
+                          <small>
+                            {event.details?.title ||
+                              event.details?.message ||
+                              (event.details?.stock_status
+                                ? `Stock status: ${event.details.stock_status === "out_of_stock" ? "Out of Stock" : "In Stock"}`
+                                : "CampusOLX activity")}
+                          </small>
+                        </div>
+                        <small>
+                          {event.created_at
+                            ? new Date(event.created_at).toLocaleString()
+                            : ""}
+                        </small>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="dashboard-empty">
+                  No student activity recorded yet. Your profile updates,
+                  listing activity, and viewed items will appear here.
+                </p>
+              )}
             </section>
           </>}
           <p className="fine-print">Only activity recorded after the required database tables are set up will appear. Older activity is not reconstructed.</p>
@@ -1152,8 +1329,9 @@ const searchSuggestions = items.filter((item) => {
           <h2 id="detail-title">{detail.title}</h2>
           <div className="detail-price">{formatPrice(detail.price)}</div>
           <span className="condition-tag inline-tag">{detail.condition}</span>
-          <span style={{ display: "inline-block", margin: "8px 0", padding: "5px 9px", borderRadius: 999, fontSize: 12, fontWeight: 700, background: detail.stock_status === "out_of_stock" ? "#fee4e2" : "#dcfae6", color: detail.stock_status === "out_of_stock" ? "#b42318" : "#067647" }}>{detail.stock_status === "out_of_stock" ? "Out of Stock" : "In Stock"}</span>
+          <span style={{ display: "inline-block", margin: "8px 0", padding: "5px 9px", borderRadius: 999, fontSize: 12, fontWeight: 700, background: detail.stock_status === "out_of_stock" ? "#fee4e2" : "#dcfae6", color: detail.stock_status === "out_of_stock" ? "#b42318" : "#067647" }}>{(detail.stock_status === "out_of_stock" || Number(detail.booked_quantity || 0) >= Number(detail.quantity ?? 1)) ? "Out of Stock" : "In Stock"}</span>
           <p>{detail.description || "No description provided."}</p>
+          <p className="muted" style={{ marginTop: 6 }}>Available quantity: <strong>{Math.max(0, Number(detail.quantity ?? 1) - Number(detail.booked_quantity ?? 0))}</strong> · Booked: {Number(detail.booked_quantity || 0)}</p>
           <p className="product-location"><MapPin size={15}/>{detail.location || "Campus pickup"}</p>
           <div className="seller-details">
             <p className="eyebrow">SELLER DETAILS</p>
@@ -1161,7 +1339,7 @@ const searchSuggestions = items.filter((item) => {
               {detail.seller_avatar_url ? <img className="seller-avatar" src={detail.seller_avatar_url} alt="Seller profile" /> : <div className="seller-avatar seller-avatar-placeholder"><UserRound size={22}/></div>}
               <div><strong>{detail.seller_name || "Campus seller"}</strong><small>{detail.seller_email || "College email not provided"}</small></div>
             </div>
-            {detail.stock_status !== "out_of_stock" && detail.seller_whatsapp ? (() => {
+            {detail.stock_status !== "out_of_stock" && Number(detail.booked_quantity || 0) < Number(detail.quantity ?? 1) && detail.seller_whatsapp ? (() => {
               const whatsappNumber = getIndianWhatsAppNumber(detail.seller_whatsapp);
               return whatsappNumber
                 ? <div className="seller-whatsapp-line"><span><strong>WhatsApp:</strong> {detail.seller_whatsapp}</span><a className="button secondary full" href={`https://wa.me/${whatsappNumber}`} target="_blank" rel="noopener noreferrer">Contact on WhatsApp <ArrowUpRight size={16}/></a></div>
@@ -1170,10 +1348,23 @@ const searchSuggestions = items.filter((item) => {
           </div>
           {isListingOwner(detail, user) && <div className="seller-listing-controls" style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16, padding: 12, border: "1px solid #e8e3da", borderRadius: 12, background: "#fffaf4" }}>
             <p style={{ margin: 0, fontWeight: 700 }}>Manage your listing</p>
+            <p style={{ margin: 0, fontSize: 13 }}>Total: {detail.quantity ?? 1} · Booked: {detail.booked_quantity ?? 0} · Available: {Math.max(0, Number(detail.quantity ?? 1) - Number(detail.booked_quantity ?? 0))}</p>
             <button type="button" className="button secondary full" onClick={() => updateStockStatus(detail, detail.stock_status === "out_of_stock" ? "in_stock" : "out_of_stock")}>{detail.stock_status === "out_of_stock" ? "Mark In Stock" : "Mark Out of Stock"}</button>
             <button type="button" className="button secondary full" style={{ color: "#b42318" }} onClick={() => deleteListing(detail)}>Delete listing</button>
           </div>}
-          {detail.stock_status === "out_of_stock" ? <button className="button primary full" disabled style={{ opacity: 0.6, cursor: "not-allowed", marginTop: 12 }}>Out of Stock</button> : <button className="button primary full" style={{ marginTop: 12 }} onClick={() => { if (!user) { setDetail(null); setAuthOpen(true); return; } window.location.href = `mailto:${detail.seller_email || ""}?subject=${encodeURIComponent("Interested in " + detail.title)}`; }}>Email seller <ArrowUpRight size={17}/></button>}
+          {isListingOwner(detail, user) ? null : (
+            <>
+              {Math.max(0, Number(detail.quantity ?? 1) - Number(detail.booked_quantity ?? 0)) > 0 ? (
+                <div style={{ marginTop: 14 }}>
+                  <label style={{ display: "block", marginBottom: 8 }}>Quantity to book
+                    <input type="number" min="1" max={Math.max(0, Number(detail.quantity ?? 1) - Number(detail.booked_quantity ?? 0))} value={bookingQuantity} onChange={e => setBookingQuantity(Math.max(1, Number(e.target.value) || 1))} style={{ width: "100%", marginTop: 6 }}/>
+                  </label>
+                  <button className="button primary full" disabled={bookingBusy} onClick={() => bookListing(detail)}>{bookingBusy ? "Booking…" : `Book now · ${bookingQuantity} item(s)`}</button>
+                </div>
+              ) : <button className="button primary full" disabled style={{ opacity: 0.6, cursor: "not-allowed", marginTop: 12 }}>Out of Stock</button>}
+              {bookingMessage && <p className={bookingMessage.startsWith("Booking confirmed") ? "notice success" : "notice error"}>{bookingMessage}</p>}
+            </>
+          )}
           <p className="fine-print">Meet in a public campus location and inspect the item before paying. Never share passwords or verification codes.</p>
         </section>
       </div>}
