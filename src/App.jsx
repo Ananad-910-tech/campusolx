@@ -358,7 +358,8 @@ export default function App() {
   });
   const [appInstalled, setAppInstalled] = useState(() => {
     if (typeof window === "undefined") return false;
-    return window.matchMedia("(display-mode: standalone)").matches ||
+    return (typeof window.matchMedia === "function" &&
+      window.matchMedia("(display-mode: standalone)").matches) ||
       window.navigator.standalone === true;
   });
 
@@ -384,9 +385,13 @@ export default function App() {
 
   function dismissInstallBanner() {
     setInstallDismissed(true);
-    try { window.localStorage.setItem("campusolx-install-dismissed", "true"); } catch {}
+    setInstallPrompt(null);
+    try {
+      window.localStorage.setItem("campusolx-install-dismissed", "true");
+    } catch (error) {
+      console.warn("Could not save install-banner preference:", error);
+    }
   }
-
   async function installCampusOLX() {
     setMobileNav(false);
     if (appInstalled) {
@@ -969,6 +974,11 @@ const searchSuggestions = items.filter((item) => {
 </div>
 
         <nav className="header-actions">
+          {!appInstalled && (
+            <button type="button" className="button secondary header-install-button" onClick={installCampusOLX}>
+              <Download size={16}/> <span>Install CampusOLX</span>
+            </button>
+          )}
           {user ? (
             <button className="button quiet" onClick={signOut}><LogOut size={17}/> Sign out</button>
           ) : (
@@ -1018,37 +1028,13 @@ const searchSuggestions = items.filter((item) => {
         }}><UserRound size={19}/> <span>My Profile</span></button>
         <div className="sidebar-bottom">
           <div className="sidebar-note"><ShieldCheck size={17}/><span>Made for your campus community</span></div>
-          <button className="sidebar-signout" onClick={() => { setMobileNav(false); installCampusOLX(); }}>
-            <Download size={16}/> {appInstalled ? "CampusOLX Installed" : "Install CampusOLX"}
-          </button>
           {user ? <button className="sidebar-signout" onClick={signOut}><LogOut size={16}/> Sign out</button> : <button className="sidebar-signout" onClick={() => setAuthOpen(true)}><UserRound size={16}/> Sign in</button>}
         </div>
       </aside>
         </div>
       </header>
 
-      {!appInstalled && !installDismissed && (
-        <div className="bottom-install-wrap" style={{ position: "fixed", zIndex: 80, left: 10, right: 10, bottom: "max(10px, env(safe-area-inset-bottom))", width: "auto", maxWidth: 520, margin: "0 auto", display: "flex", justifyContent: "center", alignItems: "center", gap: 8, padding: 8, borderRadius: 18, background: "rgba(255,255,255,0.94)", boxShadow: "0 8px 28px rgba(0,0,0,0.14)", boxSizing: "border-box", pointerEvents: "none" }}>
-          <button
-            type="button"
-            className="bottom-install-button"
-            onClick={installCampusOLX}
-            aria-label="Install CampusOLX"
-            style={{ position: "static", pointerEvents: "auto", flex: "1 1 170px", minWidth: 0, maxWidth: 280, minHeight: 48, padding: "12px 14px", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, whiteSpace: "nowrap", fontSize: "clamp(13px, 3.8vw, 16px)" }}
-          >
-            <Download size={19} />
-            <span>Install CampusOLX</span>
-          </button>
-          <button
-            type="button"
-            className="button secondary"
-            onClick={dismissInstallBanner}
-            style={{ borderRadius: 999, padding: "12px clamp(12px, 3.5vw, 18px)", minHeight: 48, minWidth: 88, flex: "0 0 auto", pointerEvents: "auto", background: "#fff", boxShadow: "0 5px 18px #00000018", whiteSpace: "nowrap", fontSize: "clamp(13px, 3.6vw, 15px)" }}
-          >
-            Not now
-          </button>
-        </div>
-      )}
+
 
       <main>
         <section className="hero">
@@ -1079,23 +1065,18 @@ const searchSuggestions = items.filter((item) => {
 
         <section id="marketplace" className="marketplace section-wrap">
      
-<div
-            className="marketplace-filter-row"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-              flexWrap: "nowrap",
-              overflowX: "auto",
-              overflowY: "hidden",
-              width: "100%",
-              paddingBottom: "8px",
-              scrollbarWidth: "thin"
-            }}
-          >
+          <div className="marketplace-filter-row">
             <button
+              type="button"
+              className={`category-chip ${activeCategory === "All items" ? "selected" : ""}`}
+              onClick={() => setActiveCategory("All items")}
+            >
+              <Package size={17}/> All items
+            </button>
+
+            <button
+              type="button"
               className="button secondary filter-button"
-              style={{ flex: "0 0 auto" }}
               onClick={() => setShowingFavorites(value => !value)}
             >
               <Heart size={17} fill={showingFavorites ? "currentColor" : "none"}/>
@@ -1103,8 +1084,8 @@ const searchSuggestions = items.filter((item) => {
             </button>
 
             <button
+              type="button"
               className="button secondary filter-button"
-              style={{ flex: "0 0 auto" }}
               onClick={() => {
                 setActiveCategory("All items");
                 setSearch("");
@@ -1114,12 +1095,11 @@ const searchSuggestions = items.filter((item) => {
               <SlidersHorizontal size={17}/> Clear filters
             </button>
 
-            {categories.map(({ name, icon: Icon }) => (
+            {categories.slice(1).map(({ name, icon: Icon }) => (
               <button
                 key={name}
                 type="button"
                 className={`category-chip ${activeCategory === name ? "selected" : ""}`}
-                style={{ flex: "0 0 auto" }}
                 onClick={() => setActiveCategory(name)}
               >
                 <Icon size={17}/>
@@ -1375,3 +1355,4 @@ const searchSuggestions = items.filter((item) => {
 function MessageIcon() {
   return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8A8.5 8.5 0 0 1 8.7 3.9a8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z"/></svg>;
 }
+

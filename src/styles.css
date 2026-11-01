@@ -6029,3 +6029,73 @@ button, input, select, textarea {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
+
+
+/* CampusOLX final responsive refinements — preserves the existing visual theme */
+.marketplace-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 8px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.marketplace-filter-row > * { flex: 0 0 auto; white-space: nowrap; }
+.header-install-button { border-color: #e8e6de; }
+.header-install-button svg { flex: 0 0 auto; }
+
+@media (max-width: 720px) {
+  .site-header {
+    height: auto;
+    min-height: 72px;
+    padding: 10px 4%;
+    display: grid;
+    grid-template-columns: minmax(0, auto) minmax(0, 1fr) 38px;
+    grid-template-areas: "brand actions menu" "search search search";
+    gap: 9px 10px;
+  }
+  .site-header > .brand { grid-area: brand; min-width: 0; }
+  .site-header > .header-search { grid-area: search; width: 100%; max-width: none; min-width: 0; }
+  .site-header > .header-actions {
+    grid-area: actions;
+    display: flex !important;
+    position: static;
+    min-width: 0;
+    margin: 0 0 0 auto;
+    padding: 0;
+    border: 0;
+    box-shadow: none;
+    background: transparent;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 5px;
+  }
+  .header-actions .button {
+    min-height: 36px;
+    padding: 8px 9px;
+    font-size: 10px;
+    gap: 5px;
+  }
+  .header-actions .header-install-button { display: inline-flex !important; }
+  .header-actions .sell-button { display: none !important; }
+  .site-header > .menu-wrapper { grid-area: menu; justify-self: end; }
+  .mobile-menu { display: grid !important; width: 38px; height: 38px; }
+  .menu-wrapper .sidebar-nav { top: calc(100% + 8px); right: 0; }
+  .marketplace-filter-row { gap: 8px; }
+  .marketplace-filter-row .filter-button,
+  .marketplace-filter-row .category-chip { min-height: 40px; padding: 9px 11px; font-size: 10px; }
+}
+
+@media (max-width: 390px) {
+  .site-header { grid-template-columns: minmax(0, auto) minmax(0, 1fr) 34px; gap: 8px; }
+  .brand-name { font-size: 15px; }
+  .brand-name small { font-size: 6px; }
+  .header-actions .button { padding: 7px 7px; font-size: 9px; }
+  .header-actions .button svg { width: 13px; height: 13px; }
+  .mobile-menu { width: 34px; height: 34px; }
+}
