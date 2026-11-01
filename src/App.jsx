@@ -87,6 +87,42 @@ function AuthModal({ onClose, onSignedIn }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
+  async function resetPassword() {
+    setError("");
+    setMessage("");
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!collegeEmailDomain) {
+      setError("Set VITE_COLLEGE_EMAIL_DOMAIN in .env.local to your college email domain.");
+      return;
+    }
+
+    if (!normalizedEmail) {
+      setError("Please enter your registered college email.");
+      return;
+    }
+
+    if (!isAllowedCollegeEmail(normalizedEmail)) {
+      setError(`Please use your college email ending in @${collegeEmailDomain}.`);
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+
+      if (error) throw error;
+      setMessage("Password reset link sent! Please check your college email.");
+    } catch (err) {
+      setError(err.message || "Could not send password reset email.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function submit(event) {
     event.preventDefault();
     setError("");
@@ -165,6 +201,16 @@ function AuthModal({ onClose, onSignedIn }) {
           <div className="input-with-icon"><Mail size={18}/><input id="college-email" type="email" required placeholder="you@college.edu" value={email} onChange={e => setEmail(e.target.value)}/></div>
           <label htmlFor="college-password">Password</label>
           <input id="college-password" type="password" required minLength={6} placeholder="At least 6 characters" value={password} onChange={e => setPassword(e.target.value)}/>
+          {mode === "login" && (
+            <button
+              type="button"
+              className="forgot-password-link"
+              onClick={resetPassword}
+              disabled={busy}
+            >
+              Forgot Password?
+            </button>
+          )}
           <button className="button primary full" disabled={busy}>{busy ? "Please wait…" : mode === "signup" ? "Create account" : "Sign in"} <ArrowUpRight size={17}/></button>
         </form>
         {error && <p className="notice error"><AlertCircle size={17}/>{error}</p>}
@@ -328,7 +374,146 @@ function SellModal({ onClose, onCreated, user }) {
   );
 }
 
-export default function App() {
+
+function ResetPasswordPage() {
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
+  const [recoverySession, setRecoverySession] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function checkRecoverySession() {
+      const { data, error: sessionError } = await supabase.auth.getSession();
+
+      if (!mounted) return;
+
+      if (sessionError) {
+        setError(sessionError.message);
+        setRecoverySession(false);
+      } else {
+        setRecoverySession(Boolean(data.session));
+      }
+      setCheckingSession(false);
+    }
+
+    checkRecoverySession();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!mounted) return;
+
+      if (event === "PASSWORD_RECOVERY" || session) {
+        setRecoverySession(Boolean(session));
+        setCheckingSession(false);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
+
+  async function updatePassword(event) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+
+    if (password.length < 6) {
+      setError("Your password must contain at least 6 characters.");
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setError("The passwords do not match.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const { error: updateError } = await supabase.auth.updateUser({ password });
+      if (updateError) throw updateError;
+
+      setMessage("Your password has been updated successfully. You can now return to CampusOLX.");
+      setPassword("");
+      setConfirmPassword("");
+      setRecoverySession(false);
+    } catch (err) {
+      setError(err.message || "Could not update your password. Please request a new reset link.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function returnToCampusOLX() {
+    await supabase.auth.signOut();
+    window.location.assign("/");
+  }
+
+  return (
+    <main className="reset-password-page">
+      <section className="modal reset-password-card" aria-labelledby="reset-password-title">
+        <div className="modal-icon"><ShieldCheck size={26}/></div>
+        <p className="eyebrow">CAMPUS COMMUNITY</p>
+        <h2 id="reset-password-title">Reset your password</h2>
+        <p className="muted">Choose a new password for your CampusOLX account.</p>
+
+        {checkingSession ? (
+          <p className="notice">Verifying your password-reset link…</p>
+        ) : message ? (
+          <>
+            <p className="notice success"><CheckCircle2 size={17}/>{message}</p>
+            <button type="button" className="button primary full" onClick={returnToCampusOLX}>
+              Return to CampusOLX <ArrowUpRight size={17}/>
+            </button>
+          </>
+        ) : !recoverySession ? (
+          <>
+            <p className="notice error"><AlertCircle size={17}/>This password-reset link is invalid or has expired. Please return to CampusOLX and request a new link.</p>
+            <a className="button primary full" href="/">Back to CampusOLX <ArrowUpRight size={17}/></a>
+          </>
+        ) : (
+          <form onSubmit={updatePassword} className="form-stack">
+            <label htmlFor="new-campus-password">New password</label>
+            <input
+              id="new-campus-password"
+              type="password"
+              required
+              minLength={6}
+              autoComplete="new-password"
+              placeholder="At least 6 characters"
+              value={password}
+              onChange={event => setPassword(event.target.value)}
+            />
+            <label htmlFor="confirm-campus-password">Confirm new password</label>
+            <input
+              id="confirm-campus-password"
+              type="password"
+              required
+              minLength={6}
+              autoComplete="new-password"
+              placeholder="Enter the new password again"
+              value={confirmPassword}
+              onChange={event => setConfirmPassword(event.target.value)}
+            />
+            {error && <p className="notice error"><AlertCircle size={17}/>{error}</p>}
+            <button className="button primary full" type="submit" disabled={busy}>
+              {busy ? "Updating password…" : "Update Password"} <ArrowUpRight size={17}/>
+            </button>
+          </form>
+        )}
+        {error && !recoverySession && !message && <p className="notice error"><AlertCircle size={17}/>{error}</p>}
+        <p className="fine-print">Never share your password or password-reset email with anyone.</p>
+      </section>
+    </main>
+  );
+}
+
+function CampusOLXApp() {
   const [items, setItems] = useState(demoItems);
   const [activeCategory, setActiveCategory] = useState("All items");
   const [search, setSearch] = useState("");
@@ -1178,4 +1363,12 @@ const searchSuggestions = items.filter((item) => {
 
 function MessageIcon() {
   return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8A8.5 8.5 0 0 1 8.7 3.9a8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z"/></svg>;
+}
+
+export default function App() {
+  const isResetPasswordRoute =
+    typeof window !== "undefined" &&
+    window.location.pathname.replace(/\/+$/, "") === "/reset-password";
+
+  return isResetPasswordRoute ? <ResetPasswordPage /> : <CampusOLXApp />;
 }
